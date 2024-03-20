@@ -1,41 +1,78 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.0;
 
-// Collateralized Loan Contract
 contract CollateralizedLoan {
-    // Define the structure of a loan
     struct Loan {
         address borrower;
-        // Hint: Add a field for the lender's address
-        uint collateralAmount;
-        // Hint: Add fields for loan amount, interest rate, due date, isFunded, isRepaid
+        address lender;
+        uint256 loanAmount;
+        uint256 interestRate; // Represented as a percentage (e.g., 5 for 5%)
+        uint256 dueDate;
+        bool isFunded;
+        bool isRepaid;
+        uint256 collateralAmount;
     }
 
-    // Create a mapping to manage the loans
-    mapping(uint => Loan) public loans;
-    uint public nextLoanId;
+    mapping(uint256 => Loan) public loans;
+    uint256 public nextLoanId;
 
-    // Hint: Define events for loan requested, funded, repaid, and collateral claimed
+    event LoanRequested(uint256 indexed loanId, address borrower, uint256 loanAmount, uint256 interestRate, uint256 duration);
+    event LoanFunded(uint256 indexed loanId, address lender);
+    event LoanRepaid(uint256 indexed loanId);
+    event CollateralClaimed(uint256 indexed loanId);
 
-    // Custom Modifiers
-    // Hint: Write a modifier to check if a loan exists
-    // Hint: Write a modifier to ensure a loan is not already funded
-
-    // Function to deposit collateral and request a loan
-    function depositCollateralAndRequestLoan(uint _interestRate, uint _duration) external payable {
-        // Hint: Check if the collateral is more than 0
-        // Hint: Calculate the loan amount based on the collateralized amount
-
-        // Hint: Increment nextLoanId and create a new loan in the loans mapping
-        // Hint: Emit an event for loan request
+    modifier loanExists(uint256 loanId) {
+        require(loans[loanId].borrower != address(0), "Loan does not exist.");
+        _;
     }
 
-    // Function to fund a loan
-    // Hint: Write the fundLoan function with necessary checks and logic
+    function depositCollateralAndRequestLoan(uint256 loanAmount, uint256 interestRate, uint256 duration) external payable {
+        uint256 dueDate = block.timestamp + duration;
+        loans[nextLoanId] = Loan(msg.sender, address(0), loanAmount, interestRate, dueDate, false, false, msg.value);
+        emit LoanRequested(nextLoanId, msg.sender, loanAmount, interestRate, duration);
+        nextLoanId++;
+    }
 
-    // Function to repay a loan
-    // Hint: Write the repayLoan function with necessary checks and logic
+    function fundLoan(uint256 loanId) external payable loanExists(loanId) {
+        Loan storage loan = loans[loanId];
+        require(!loan.isFunded, "Loan is already funded.");
+        require(msg.value >= loan.loanAmount, "Insufficient amount to fund the loan.");
 
-    // Function to claim collateral on default
-    // Hint: Write the claimCollateral function with necessary checks and logic
+        loan.lender = msg.sender;
+        loan.isFunded = true;
+        emit LoanFunded(loanId, msg.sender);
+    }
+
+    function repayLoan(uint256 loanId) external payable loanExists(loanId) {
+        Loan storage loan = loans[loanId];
+        require(loan.isFunded, "Loan is not funded.");
+        require(!loan.isRepaid, "Loan is already repaid.");
+        require(block.timestamp <= loan.dueDate, "Loan is past due date.");
+
+        uint256 repaymentAmount = calculateRepaymentAmount(loanId);
+        require(msg.value >= repaymentAmount, "Insufficient amount to repay the loan.");
+
+        loan.isRepaid = true;
+        payable(loan.lender).transfer(repaymentAmount);
+
+        emit LoanRepaid(loanId);
+    }
+
+    function claimCollateral(uint256 loanId) external loanExists(loanId) {
+        Loan storage loan = loans[loanId];
+        require(msg.sender == loan.lender, "Caller is not the lender.");
+        require(loan.isFunded, "Loan is not funded.");
+        require(!loan.isRepaid, "Loan is already repaid.");
+        require(block.timestamp > loan.dueDate, "Loan is not past due date yet.");
+
+        loan.isRepaid = true; // Mark as repaid to prevent further actions
+        payable(loan.lender).transfer(loan.collateralAmount);
+
+        emit CollateralClaimed(loanId);
+    }
+
+    function calculateRepaymentAmount(uint256 loanId) public view returns (uint256) {
+        Loan storage loan = loans[loanId];
+        return loan.loanAmount + (loan.loanAmount * loan.interestRate / 100);
+    }
 }
